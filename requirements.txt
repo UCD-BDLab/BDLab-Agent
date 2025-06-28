@@ -1,0 +1,7 @@
+pandas
+BeutifulSoup4
+transformers
+huggingface-hub
+
+# torch 
+# pip install torch --index-url https://download.pytorch.org/whl/cu118
