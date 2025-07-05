@@ -1,11 +1,11 @@
 import os
 import json
-import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 MODEL_NAME = "meta-llama/Meta-Llama-3-8B-Instruct"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+import torch
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 class SiteAgent:
@@ -141,7 +141,7 @@ class SiteAgent:
 
 
 if __name__ == "__main__":
-    with open("simple_scrape.json", "r", encoding="utf-8") as f:
+    with open("scrapped.json", "r", encoding="utf-8") as f:
         data = json.load(f)
 
     agent = SiteAgent(data)
