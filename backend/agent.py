@@ -1,99 +1,154 @@
-import json
 import os
-import torch
+import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from .scraper import scrape_members, scrape_research
 
-class BDLabAgent:
-    def __init__(self):
-        # scrape fresh members and research
-        members = scrape_members()
-        research = scrape_research()
-        history = []
+MODEL_NAME = "meta-llama/Meta-Llama-3-8B-Instruct"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-        # history exists, load it
-        if os.path.exists("memory.json"):
-            with open("memory.json", "r") as memory_file:
-                memory = json.load(memory_file)
-                history = memory.get("history", [])
-        
-        self.memory = {
-            "members": members,
-            "research": research,
-            "history": history
-        }
+import torch
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # "cuda" if torch.cuda.is_available() else 
-        self.device_nm = "cpu"
-        # tokenizer and model initialization
-        self.tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct", token=True)
-        self.model = AutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct", token=True)
-        self.model = self.model.to(self.device_nm)
-        
-    def save_memory(self):
-        # save the current memory state to the json file
-        with open("memory.json", "w") as f:
-            json.dump(self.memory, f, indent=2)
+class SiteAgent:
+    def __init__(self, site_data):
+        self.site_data = site_data
+        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_auth_token=True)
+        self.model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, use_auth_token=True, load_in_8bit=True, device_map="auto", torch_dtype=torch.float16)
+        self.sections = {}
 
-    def build_prompt(self, user_query):
-        # contextual prompt for the LLM
-        # this method makes a big prompt string that tells the model how to answe based on 
-        # what is the BDLab agent
-        # who are the members
-        # what research topics there are (soon) 
-        # what has been said so far in the convo
-        # and what is the user asking
+        self._build_people_section()
+        self._build_research_section()
+        self._build_education_section()
+        self._build_news_section()
 
-        prompt = ""
-        prompt += "You are BDLab-Agent, an assistant for CU Denver's Big Data Lab.\n"
-        prompt += "Here are the lab members:\n"
-        for member in self.memory["members"]:
-            # list name and role only for brevity
-            prompt += f"- {member.get('name', 'Unknown')} ({member.get('role', 'Unknown')})\n"
+    def _extract_people_json(self):
+        for page in self.site_data.values():
+            je = page.get("json_equivalent", {})
+            if "https://cse.ucdenver.edu/~bdlab/people.json" in je:
+                return je["https://cse.ucdenver.edu/~bdlab/people.json"]
 
-        prompt += "\nHere are the research topics:\n"
-        for topic in self.memory["research"]:
-            prompt += f"- {topic}\n"
+        return None
 
-        prompt += "\nConversation history:\n"
-        for exchange in self.memory["history"]:
-            prompt += f"User: {exchange.get('user', '')}\n"
-            prompt += f"Agent: {exchange.get('agent', '')}\n"
+    def _extract_json_list(self, filename):
+        for page in self.site_data.values():
+            for url, data in page.get("json_equivalent", {}).items():
 
-        prompt += "\nUser asks: " + user_query + "\n"
-        prompt += "Agent, please answer concisely based on the information above."
-        return prompt
+                if url.endswith(filename) and isinstance(data, list):
+                    return data
+                
+        return None
 
-    def ask_llm(self, prompt):
-        # when a user asks a questgions we first tokenize then try to generate a appropriate response
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device_nm)
-        outputs = self.model.generate(**inputs, max_new_tokens=200)
-        text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        return text.strip()
+    def _build_people_section(self):
+        ppl = self._extract_people_json()
 
-    def handle_query(self, user_query):
-        # query can be seen as an entry point for the agent to process prompts and return answers
-        prompt = self.build_prompt(user_query)
-        answer = self.ask_llm(prompt)
+        if not ppl:
+            return
 
-        # we take record of the conversation in memory and save it
-        record = {"user": user_query,"agent": answer}
-        self.memory["history"].append(record)
-        self.save_memory()
+        text = ""
+        for group in ["professors", "team_members", "staff", "alumni"]:
+            if group in ppl:
+                title = group.replace("_", " ").title() + ":\n"
+                text += title
 
-        # return answser back to user.
-        return answer
+                members = ppl[group]
+                for rec in members.values():
+                    line = "- " + rec["name"] + " (" + rec["role"] + ")\n"
+                    text += line
+
+                text += "\n"
+
+        self.sections["people"] = text.strip()
+
+    def _build_research_section(self):
+        research = self._extract_json_list("research.json")
+
+        if not research:
+            return
+
+        text = ""
+
+        for item in research:
+            line = "- " + item["title"] + ": " + item["summary"] + "\n"
+            text += line
+
+        self.sections["research"] = text.strip()
+
+    def _build_education_section(self):
+        education = self._extract_json_list("education.json")
+
+        if not education:
+            return
+
+        text = ""
+        for course in education:
+            desc_list = course.get("description", [])
+            desc = ""
+            
+            for d in desc_list:
+                if desc:
+                    desc += ", "
+                desc += d
+
+            line = "- " + course["name"] + ": " + desc + "\n"
+            text += line
+
+        self.sections["education"] = text.strip()
+
+    def _build_news_section(self):
+        news = self._extract_json_list("news.json")
+
+        if not news:
+            return
+
+        text = ""
+        for item in news:
+            date_str = item["month"] + " " + str(item["date"]) + ", " + str(item["year"])
+            line = "- " + date_str + ": " + item["title"] + "\n"
+            text += line
+
+        self.sections["news"] = text.strip()
+
+    def _ask(self, prompt):
+        tokens = self.tokenizer( prompt,return_tensors="pt").to(DEVICE)
+        out = self.model.generate(**tokens, max_new_tokens=200)
+        gen = out[0][tokens["input_ids"].shape[-1]:]
+
+        return self.tokenizer.decode(gen, skip_special_tokens=True).strip()
+
+    def query(self, user_q):
+        low = user_q.lower()
+
+        if ("people" in low or "member" in low or "staff" in low
+                or "alumni" in low or "professor" in low):
+            
+            summary = self.sections.get("people")
+            if not summary:
+                return "Sorry, I couldn't find any people data."
+
+            prompt = "You are BDLab-Agent. Here are the lab people:\n\n" + summary + "\n\nUser question: " + user_q + "\nAnswer using only the above information." 
+            return self._ask(prompt)
+
+        for key in ["research", "education", "news"]:
+            if key in low:
+
+                summary = self.sections.get(key)
+                if not summary:
+                    return "Sorry, I couldn't find any " + key + " data."
+
+                prompt = "You are BDLab-Agent. Use ONLY this " + key + " info to answer:\n\n" + summary + "\n\nUser question: " + user_q + "\nAnswer concisely." 
+                return self._ask(prompt)
+
+        return "Sorry, I only know about people, research, education, and news."
+
 
 if __name__ == "__main__":
-    # simple read, evaluate, print and loop. aka REPL
-    agent = BDLabAgent()
-    print("Welcome to BDLab-Agent! Type 'quit' to exit.")
+    with open("scrapped.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
 
+    agent = SiteAgent(data)
+    print("Ask me anything about the site! (Type 'quit' to exit.) or crtl+c to stop the program.")
     while True:
-        user_input = input("You: ").strip()
-        if user_input.lower() in ("quit", "exit"):
-            print("Goodbye!")
+        que = input("You: ").strip()
+        if que.lower() in ("quit", "exit"):
             break
 
-        response = agent.handle_query(user_input)
-        print("Agent:", response)
+        print("Agent:", agent.query(que))
