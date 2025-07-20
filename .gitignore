@@ -1,6 +1,9 @@
 #other
 
 dev_notes.md
+data/
+kaggle.json
+notes.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

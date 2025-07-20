@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "Lab-Agent/*": ["src/*"],
+      "shared-theme/*": ["shared-theme/*"]
+    }
+  },
+  "include": ["src", "shared-theme"],
+}
