@@ -6,9 +6,8 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      // so you can import from 'shared-theme' instead of relative paths
       'shared-theme': path.resolve(__dirname, 'src/shared-theme'),
-      dashboard:    path.resolve(__dirname, 'src/dashboard'),
+      'Lab-Agent': path.resolve(__dirname, 'src/Lab-Agent'),
     },
     extensions: ['.tsx', '.ts', '.jsx', '.js', '.json'],
   },

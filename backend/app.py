@@ -1,12 +1,18 @@
-from config import DevelopmentConfig, ProductionConfig
+import os
+import glob
+import faiss
+import torch
+from pathlib import Path
+from config import DevelopmentConfig, ProductionConfig, ModelConfig
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os, glob, faiss, torch
-from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 app = Flask(__name__)
+
+# load the model configuration
+app.config.from_object(ModelConfig)
 
 # If FLASK_ENV or FLASK_DEBUG tells us we’re in dev mode, use DevelopmentConfig
 if os.environ.get("FLASK_ENV") == "development" or os.environ.get("FLASK_DEBUG") == "1":
@@ -19,11 +25,12 @@ else:
 # Now safe to reference CORS_ORIGINS, with a fallback to empty list
 CORS(app, resources={r"/api/*": {"origins": app.config.get("CORS_ORIGINS", [])}})
 
-# Load your documents & chunk them
-DATA_FOLDER = Path(__file__).parent / "data" / "kaggle" / "us-senate-bill"
+# Load your documents using model configuration 
+DATA_FOLDER = ModelConfig.PROJECT_ROOT / "data" / "kaggle" / "us-senate-bill"
 FILE_PATHS = list(DATA_FOLDER.glob("*.txt"))
 NUM_FILES = len(FILE_PATHS)
 
+# Read the .txt files and split them into chunks
 raw_chunks = []
 for path in FILE_PATHS:
     text = path.read_text(encoding="utf-8")
@@ -43,12 +50,9 @@ dim = chunk_embs.shape[1]
 index = faiss.IndexFlatL2(dim)
 index.add(chunk_embs)
 
-#BASE = "/home/vicente/Github/BDLab-Agent/backend/data/models/llama3-8b-instruct/models--meta-llama--Meta-Llama-3-8B-Instruct"
-#SNAP = "8afb486c1db24fe5011ec46dfbe5b5dccdb575c2"
-BASE = "/home/vicente/Github/BDLab-Agent/backend/data/models/gpt2-large/models--gpt2-large"
-SNAP = "32b71b12589c2f8d625668d2335a01cac3249519"
-model = AutoModelForCausalLM.from_pretrained(f"{BASE}/snapshots/{SNAP}",torch_dtype=torch.bfloat16,device_map="auto",local_files_only=True)
-tokenizer = AutoTokenizer.from_pretrained(f"{BASE}/snapshots/{SNAP}",local_files_only=True)
+base = Path(app.config["MODEL_BASE_PATH"])/ "snapshots"/ app.config["MODEL_SNAPSHOT"]
+model = AutoModelForCausalLM.from_pretrained(str(base),torch_dtype=torch.bfloat16,device_map="auto",local_files_only=True)
+tokenizer = AutoTokenizer.from_pretrained(str(base),local_files_only=True)
 
 # if using GPT2, set pad_token_id to eos_token_id, otherwise coment it out and uncomment the lines above for Llama3
 model.config.pad_token_id = model.config.eos_token_id

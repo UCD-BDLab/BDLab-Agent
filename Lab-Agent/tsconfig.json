@@ -3,7 +3,7 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "dashboard/*": ["src/dashboard/*"],
+      "Lab-Agent/*": ["src/Lab-Agent/*"],
       "shared-theme/*": ["src/shared-theme/*"]
     }
   },
