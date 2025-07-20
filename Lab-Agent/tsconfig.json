@@ -3,13 +3,9 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "Lab-Agent/*": ["src/Lab-Agent/*"],
-      "shared-theme/*": ["src/shared-theme/*"]
+      "Lab-Agent/*": ["src/*"],
+      "shared-theme/*": ["shared-theme/*"]
     }
   },
-  "include": ["src"],
-  "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
-  ]
+  "include": ["src", "shared-theme"],
 }
