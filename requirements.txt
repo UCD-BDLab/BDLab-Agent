@@ -1,14 +1,21 @@
-pandas
-BeautifulSoup4
+flask
+flask-cors
+pandas 
+python-dotenv
+torch
+kaggle
+ipykernel
 transformers
-huggingface-hub
-accelerate 
-bitsandbytes
-lxml_html_clean
+accelerate
+ipywidgets
+sentence_transformers
+faiss-cpu
+langchain
 flash-attn
+huggingface-hub
 
 # i also had to instal  NVIDIA CUDA Compiler driver which is included as part of the CUDA Toolkit
-
+# nvcc --version
 
 # torch 
-# pip install torch --index-url https://download.pytorch.org/whl/cu118
+# pip3 install torch torchvision torchaudio
