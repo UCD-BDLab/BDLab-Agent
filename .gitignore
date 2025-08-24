@@ -4,6 +4,10 @@ dev_notes.md
 data/
 kaggle.json
 notes.md
+Lab-Agent-oldUI/
+seed.json
+.env.local
+firebase/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
