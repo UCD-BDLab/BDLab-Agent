@@ -1,6 +1,10 @@
 # BDLab Agent
 A modular LLM/RAG demo platform using U.S. Senate Bills as real-world data for information retrieval, stylometric analysis, and document drafting research.
 
+## Agent Demo
+
+![demo1](Assets/contex-upload.png)
+![demo2](Assets/bdlab-atlas.png)
 
 ## Getting Started:
 Clone the repo:
@@ -122,7 +126,3 @@ Currently testing: **meta-llama/Meta-Llama-3-8B-Instruct**.
 - RAM: 64 GB (10.7 GB used)
 
 Note: Currently only utilizing GPU-0. Parallelization across both GPUs is planned.
-
-## Agent Demo
-
-![Interactive query demo](Assets/agent.png)

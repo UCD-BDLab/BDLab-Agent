@@ -4,7 +4,7 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  resolve: {
+    resolve: {
     alias: {
       'shared-theme': path.resolve(__dirname, 'src/shared-theme'),
       'Lab-Agent': path.resolve(__dirname, 'src/Lab-Agent'),

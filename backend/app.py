@@ -1,4 +1,5 @@
 import os
+import re
 import glob
 import faiss
 import torch
@@ -57,14 +58,46 @@ tokenizer = AutoTokenizer.from_pretrained(str(base),local_files_only=True)
 # if using GPT2, set pad_token_id to eos_token_id, otherwise coment it out and uncomment the lines above for Llama3
 model.config.pad_token_id = model.config.eos_token_id
 
-# chat wrapper
-def chat(prompt: str, max_new_tokens: int = 200) -> str:
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    outputs = model.generate(inputs.input_ids,attention_mask=inputs.attention_mask,max_new_tokens=max_new_tokens,do_sample=True,temperature=0.7)
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    cleaned_text = text[len(prompt):].strip().split("\n\n")[0]
+BULLET_PREFIX = r'(?:[-*]\s+|\(?\d{1,3}[.)]\)?\s+)'
 
-    return cleaned_text
+def extract_bullets(txt: str):
+    txt = txt.replace('\r\n', '\n').strip()
+    pattern = rf'(^\s*{BULLET_PREFIX}.+?)(?=\n\s*(?:[-*]|\(?\d{{1,3}}[.)]\)?)\s+|$)'
+
+    matches = re.findall(pattern, txt, flags=re.M | re.S)
+
+    items = []
+    for m in matches:
+        cleaned = re.sub(rf'^\s*{BULLET_PREFIX}', '', m).strip()
+        if cleaned:
+            items.append(cleaned)
+
+    return items
+
+# # chat wrapper
+# def chat(prompt: str, max_new_tokens: int = 200) -> str:
+#     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+#     outputs = model.generate(inputs.input_ids,attention_mask=inputs.attention_mask,max_new_tokens=max_new_tokens,do_sample=True,temperature=0.7)
+#     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+#     cleaned_text = text[len(prompt):].strip().split("\n\n")[0]
+
+#     return cleaned_text
+
+def chat(prompt: str, max_new_tokens: int = 300):
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    outputs = model.generate(
+        inputs.input_ids,
+        attention_mask=inputs.attention_mask,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        temperature=0.7,
+        top_p=0.95,
+        eos_token_id=getattr(tokenizer, "eos_token_id", None),
+        pad_token_id=getattr(tokenizer, "pad_token_id", getattr(tokenizer, "eos_token_id", None)),
+    )
+    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    completion = text[len(prompt):].strip()
+    return completion
 
 @app.route("/api/qb", methods=["POST"])
 def qb():
@@ -83,24 +116,51 @@ def qb():
         passages.append(raw_chunks[idx])
 
     # metadata lines to add context
-    metadata_lines = []
-    metadata_lines.append(f"You have ingested {NUM_FILES} text files:")
-    for fp in FILE_PATHS:
-        metadata_lines.append(f"- {Path(fp).name}")
+    # metadata_lines = []
+    # metadata_lines.append(f"You have ingested {NUM_FILES} text files:")
+    # for fp in FILE_PATHS:
+    #     metadata_lines.append(f"- {Path(fp).name}")
 
-    metadata_block = "\n".join(metadata_lines)
-    passages_block = "\n\n".join(passages)
+    #metadata_block = "\n".join(metadata_lines)
+    #passages_block = "\n\n".join(passages)
 
-    # We combine the components above to assemble the full promp
-    prompt = f"""
-    {metadata_block}You are a helpful assistant. Use ONLY the following passages:\n
-    Retrieved Passages: {passages_block}.\n
-    Question: {question}.\n
-    Answer:"""
+    SYSTEM = (
+    "You are a helpful assistant. "
+    "Answer the user's question directly in natural language. "
+    "Use the provided context only if it helps, but do NOT mention or quote the context, "
+    "files, retrieval steps, or anything about how you got the information."
+    )
+
+    context = "\n\n".join(passages)
+
+    prompt = (
+        f"{SYSTEM}\n\n"
+        f"Context:\n{context}\n\n"
+        f"User question: {question}\n"
+        f"Assistant answer:"
+    )
+    #We combine the components above to assemble the full promp
+    # prompt = f"""
+    # {metadata_block}You are a helpful assistant. Use ONLY the following passages:\n
+    # Retrieved Passages: {passages_block}.\n
+    # Question: {question}.\n
+    # Answer:"""
+
+    # prompt = f"""
+    #     Please answer in concise bullet points. Start each point with "- ".
+    #     {metadata_block}
+    #     Use ONLY the following passages:
+    #     {passages_block}
+    #     Question: {question}
+    #     Answer (bullet points):
+    # """
 
     # Sedingfing it to the model
     try:
-        answer = chat(prompt)
+        answer = chat(prompt, max_new_tokens=300)
         return jsonify({"answer": answer})
+        #answer = chat(prompt)
+        #bullets = extract_bullets(answer)
+        #return jsonify({"answer": answer})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -10,7 +10,7 @@ import Typography from '@mui/material/Typography';
 import SendIcon from '@mui/icons-material/Send';
 import { API_BASE_URL } from '../config.js';
 
-export default function QBChatBox() {
+export default function ChatBot() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -51,7 +51,7 @@ export default function QBChatBox() {
 
   return (
     <Box sx={{
-        height: 600,
+        height: 800,
         width: '100%',
         boxShadow: 1,
         bgcolor: 'background.paper',
@@ -62,7 +62,7 @@ export default function QBChatBox() {
         display: 'flex',
         flexDirection: 'column'}}>
       <Typography variant="h6" gutterBottom>
-        BDLab Agent
+        BDLab Atlas
       </Typography>
       <Box sx={{ flexGrow: 1, overflowY: 'auto', mb: 1 }}>
         <List>
@@ -79,7 +79,15 @@ export default function QBChatBox() {
                   maxWidth: '80%'
                 }}
               >
-                <ListItemText primary={m.text} />
+            <ListItemText
+              primary={m.text}
+              slotProps={{
+                primary: {
+                  component: 'span',
+                  sx: { whiteSpace: 'pre-wrap' },
+                },
+              }}
+            />
               </Box>
             </ListItem>
           ))}
