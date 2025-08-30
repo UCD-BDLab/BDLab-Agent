@@ -8,6 +8,7 @@ Lab-Agent-oldUI/
 seed.json
 .env.local
 firebase/
+gtp-oss-20b.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

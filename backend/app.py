@@ -9,6 +9,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import numpy as np
 
 app = Flask(__name__)
 
@@ -44,19 +45,31 @@ for path in FILE_PATHS:
 # FAISS is used as a vector database to index those embeddings
 # This gives us the ability to search for similar chunks of text
 # Not quite a database, this vector index lives in memory
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-chunk_embs = embedder.encode(raw_chunks, convert_to_numpy=True, show_progress_bar=True)
+EMBEDDING_MODEL_PATH = "data/embeddings/gte-large"
+embedder = SentenceTransformer(EMBEDDING_MODEL_PATH)
+chunk_embs = embedder.encode(raw_chunks, convert_to_numpy=True, show_progress_bar=True).astype(np.float32)
 
 dim = chunk_embs.shape[1]
-index = faiss.IndexFlatL2(dim)
+index = faiss.IndexFlatIP(dim)
 index.add(chunk_embs)
 
-base = Path(app.config["MODEL_BASE_PATH"])/ "snapshots"/ app.config["MODEL_SNAPSHOT"]
+base = Path(app.config["MODEL_BASE_PATH"])
 model = AutoModelForCausalLM.from_pretrained(str(base),torch_dtype=torch.bfloat16,device_map="auto",local_files_only=True)
 tokenizer = AutoTokenizer.from_pretrained(str(base),local_files_only=True)
+model.eval()
+
 
 # if using GPT2, set pad_token_id to eos_token_id, otherwise coment it out and uncomment the lines above for Llama3
-model.config.pad_token_id = model.config.eos_token_id
+#model.config.pad_token_id = model.config.eos_token_id
+if tokenizer.pad_token_id is None:
+    tokenizer.pad_token = tokenizer.eos_token
+if model.config.pad_token_id is None:
+    model.config.pad_token_id = tokenizer.pad_token_id
+
+tokenizer.padding_side = "left"
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 BULLET_PREFIX = r'(?:[-*]\s+|\(?\d{1,3}[.)]\)?\s+)'
 
@@ -83,21 +96,49 @@ def extract_bullets(txt: str):
 
 #     return cleaned_text
 
-def chat(prompt: str, max_new_tokens: int = 300):
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    outputs = model.generate(
-        inputs.input_ids,
-        attention_mask=inputs.attention_mask,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
-        temperature=0.7,
-        top_p=0.95,
-        eos_token_id=getattr(tokenizer, "eos_token_id", None),
-        pad_token_id=getattr(tokenizer, "pad_token_id", getattr(tokenizer, "eos_token_id", None)),
-    )
+# def chat(prompt: str, max_new_tokens: int = 300):
+#     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+#     outputs = model.generate(
+#         inputs.input_ids,
+#         attention_mask=inputs.attention_mask,
+#         max_new_tokens=max_new_tokens,
+#         do_sample=True,
+#         temperature=0.7,
+#         top_p=0.95,
+#         eos_token_id=getattr(tokenizer, "eos_token_id", None),
+#         pad_token_id=getattr(tokenizer, "pad_token_id", getattr(tokenizer, "eos_token_id", None)),
+#     )
+#     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+#     completion = text[len(prompt):].strip()
+#     return completion
+
+def chat(messages, max_new_tokens: int = 300) -> str:
+    """
+    Renders via chat_template.jinja and returns only the completion (no prompt echo or leftovers)
+    messages: List of dicts with "role" and "content" keys
+    """
+    rendered = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(rendered, return_tensors="pt")
+    for k in list(inputs.keys()):
+        v = inputs[k]
+        if isinstance(v, torch.Tensor):
+            inputs[k] = v.to(model.device)
+
+    with torch.inference_mode():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.95,
+            eos_token_id=getattr(tokenizer, "eos_token_id", None),
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    completion = text[len(prompt):].strip()
+    completion = text[len(rendered):].strip()
     return completion
+
 
 @app.route("/api/qb", methods=["POST"])
 def qb():
@@ -132,13 +173,18 @@ def qb():
     )
 
     context = "\n\n".join(passages)
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": f"Context:\n{context}"},
+        {"role": "user", "content": question},
+    ]
 
-    prompt = (
-        f"{SYSTEM}\n\n"
-        f"Context:\n{context}\n\n"
-        f"User question: {question}\n"
-        f"Assistant answer:"
-    )
+    #prompt = (
+    #     f"{SYSTEM}\n\n"
+    #     f"Context:\n{context}\n\n"
+    #     f"User question: {question}\n"
+    #     f"Assistant answer:"
+    # )
     #We combine the components above to assemble the full promp
     # prompt = f"""
     # {metadata_block}You are a helpful assistant. Use ONLY the following passages:\n
@@ -157,7 +203,7 @@ def qb():
 
     # Sedingfing it to the model
     try:
-        answer = chat(prompt, max_new_tokens=300)
+        answer = chat(messages, max_new_tokens=300)
         return jsonify({"answer": answer})
         #answer = chat(prompt)
         #bullets = extract_bullets(answer)
