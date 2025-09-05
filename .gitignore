@@ -9,7 +9,10 @@ seed.json
 .env.local
 firebase/
 gtp-oss-20b.md
-
+DISES/
+app_testing_fail.ipynb
+app_testing_backup.ipynb
+app_old.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

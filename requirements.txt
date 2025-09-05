@@ -15,6 +15,7 @@ flash-attn
 huggingface-hub
 kernels
 safetensors
+openai-harmony
 
 # i also had to instal  NVIDIA CUDA Compiler driver which is included as part of the CUDA Toolkit
 # nvcc --version

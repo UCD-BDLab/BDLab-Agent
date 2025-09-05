@@ -3,6 +3,7 @@ import re
 import glob
 import faiss
 import torch
+import sys
 from pathlib import Path
 from config import DevelopmentConfig, ProductionConfig, ModelConfig
 from flask import Flask, request, jsonify
@@ -10,11 +11,12 @@ from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
+import json
+from collections import defaultdict
+#from tools.embed import chunk_files, embed_chunks
+#from tools.retrieval import chat_oss, ask_rag, retrieve_context
 
 app = Flask(__name__)
-
-# load the model configuration
-app.config.from_object(ModelConfig)
 
 # If FLASK_ENV or FLASK_DEBUG tells us we’re in dev mode, use DevelopmentConfig
 if os.environ.get("FLASK_ENV") == "development" or os.environ.get("FLASK_DEBUG") == "1":
@@ -28,118 +30,200 @@ else:
 CORS(app, resources={r"/api/*": {"origins": app.config.get("CORS_ORIGINS", [])}})
 
 # Load your documents using model configuration 
-DATA_FOLDER = ModelConfig.PROJECT_ROOT / "data" / "kaggle" / "us-senate-bill"
-FILE_PATHS = list(DATA_FOLDER.glob("*.txt"))
-NUM_FILES = len(FILE_PATHS)
+# Local model configuration 
+files_path = Path("/home/vicente/Github/BDLab-Agent/backend/data/kaggle/us-senate-bill")
+files_list = list(files_path.glob("*.txt"))
+total_files = len(files_list)
 
-# Read the .txt files and split them into chunks
+
+def text_splitter(text, chunk_size=500, chunk_overlap=50):
+    """
+    Splits a text into overlapping chunks manually.
+    """
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size.")
+
+    chunks = []
+    start_index = 0
+
+    # loop to capture chunks with overlap
+    while start_index < len(text):
+        end_index = start_index + chunk_size
+
+        chunk = text[start_index:end_index]
+        chunks.append(chunk)
+        
+        start_index += chunk_size - chunk_overlap
+
+    return chunks
+
+# Read the .txt files and split them into chunks: [{file_id, title, chunk_id}]
 raw_chunks = []
-for path in FILE_PATHS:
+chunk_metadata = []
+file_titles = {}
+
+for path in files_list:
     text = path.read_text(encoding="utf-8")
-    for para in text.split("\n\n"):
-        s = para.strip()
-        if len(s) > 200:
-            raw_chunks.append(s)
+    file_id = path.stem
+    title = path.name
+    file_titles[file_id] = title
+  
+    # split the entire document text with overlap
+    document_chunks = text_splitter(text, chunk_size=500, chunk_overlap=50)
 
-# Here we use a sentence tranformer to build the embeddings (text to numeric vectors)
-# FAISS is used as a vector database to index those embeddings
-# This gives us the ability to search for similar chunks of text
-# Not quite a database, this vector index lives in memory
-EMBEDDING_MODEL_PATH = "data/embeddings/gte-large"
-embedder = SentenceTransformer(EMBEDDING_MODEL_PATH)
-chunk_embs = embedder.encode(raw_chunks, convert_to_numpy=True, show_progress_bar=True).astype(np.float32)
+    for chunk_id, chunk in enumerate(document_chunks):
 
-dim = chunk_embs.shape[1]
+        # this adds enrichment to each chunk so the embedding captures a more complete context representation
+        chunk_with_title = f"From the bill titled '{title}': {chunk}"
+        raw_chunks.append(chunk_with_title)
+        chunk_metadata.append({
+            "file_id": file_id,
+            "title": title,
+            "chunk_id": chunk_id
+        })
+        
+print(f"Loaded {total_files} files, created {len(raw_chunks)} chunks.")
+embed_model = "data/embeddings/gte-large"
+embedder = SentenceTransformer(embed_model)
+
+# embed the chunks
+chunk_embs = embedder.encode(
+    raw_chunks,
+    convert_to_numpy=True,
+    show_progress_bar=True
+).astype(np.float32)
+
+# normalize for cosine similarity search
+faiss.normalize_L2(chunk_embs)
+
+dim = int(chunk_embs.shape[1])
 index = faiss.IndexFlatIP(dim)
 index.add(chunk_embs)
 
-base = Path(app.config["MODEL_BASE_PATH"])
-model = AutoModelForCausalLM.from_pretrained(str(base),torch_dtype=torch.bfloat16,device_map="auto",local_files_only=True)
+base = Path("/home/vicente/Github/BDLab-Agent/backend/data/GPTModels/gpt-oss-20b")
+model = AutoModelForCausalLM.from_pretrained(str(base),dtype=torch.bfloat16,device_map="auto",local_files_only=True)
 tokenizer = AutoTokenizer.from_pretrained(str(base),local_files_only=True)
 model.eval()
-
-
-# if using GPT2, set pad_token_id to eos_token_id, otherwise coment it out and uncomment the lines above for Llama3
-#model.config.pad_token_id = model.config.eos_token_id
-if tokenizer.pad_token_id is None:
-    tokenizer.pad_token = tokenizer.eos_token
-if model.config.pad_token_id is None:
-    model.config.pad_token_id = tokenizer.pad_token_id
-
-tokenizer.padding_side = "left"
-
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
-
-BULLET_PREFIX = r'(?:[-*]\s+|\(?\d{1,3}[.)]\)?\s+)'
-
-def extract_bullets(txt: str):
-    txt = txt.replace('\r\n', '\n').strip()
-    pattern = rf'(^\s*{BULLET_PREFIX}.+?)(?=\n\s*(?:[-*]|\(?\d{{1,3}}[.)]\)?)\s+|$)'
-
-    matches = re.findall(pattern, txt, flags=re.M | re.S)
-
-    items = []
-    for m in matches:
-        cleaned = re.sub(rf'^\s*{BULLET_PREFIX}', '', m).strip()
-        if cleaned:
-            items.append(cleaned)
-
-    return items
-
-# # chat wrapper
-# def chat(prompt: str, max_new_tokens: int = 200) -> str:
-#     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-#     outputs = model.generate(inputs.input_ids,attention_mask=inputs.attention_mask,max_new_tokens=max_new_tokens,do_sample=True,temperature=0.7)
-#     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-#     cleaned_text = text[len(prompt):].strip().split("\n\n")[0]
-
-#     return cleaned_text
-
-# def chat(prompt: str, max_new_tokens: int = 300):
-#     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-#     outputs = model.generate(
-#         inputs.input_ids,
-#         attention_mask=inputs.attention_mask,
-#         max_new_tokens=max_new_tokens,
-#         do_sample=True,
-#         temperature=0.7,
-#         top_p=0.95,
-#         eos_token_id=getattr(tokenizer, "eos_token_id", None),
-#         pad_token_id=getattr(tokenizer, "pad_token_id", getattr(tokenizer, "eos_token_id", None)),
-#     )
-#     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-#     completion = text[len(prompt):].strip()
-#     return completion
-
-def chat(messages, max_new_tokens: int = 300) -> str:
+def chat_oss(user_prompt, system_prompt=None, max_new_tokens=512, do_sample=True, temperature=0.1):
     """
-    Renders via chat_template.jinja and returns only the completion (no prompt echo or leftovers)
-    messages: List of dicts with "role" and "content" keys
+    Core function to generate a response from the LLM without external context.
     """
-    rendered = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(rendered, return_tensors="pt")
-    for k in list(inputs.keys()):
-        v = inputs[k]
-        if isinstance(v, torch.Tensor):
-            inputs[k] = v.to(model.device)
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
+
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    
+    gen_kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": do_sample,
+        "pad_token_id": tokenizer.eos_token_id
+    }
+    if do_sample:
+        gen_kwargs["temperature"] = temperature
 
     with torch.inference_mode():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.95,
-            eos_token_id=getattr(tokenizer, "eos_token_id", None),
-            pad_token_id=tokenizer.pad_token_id,
-        )
+        outputs = model.generate(**inputs, **gen_kwargs)
 
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    completion = text[len(rendered):].strip()
-    return completion
+    prompt_length = inputs["input_ids"].shape[1]
+    raw_output = tokenizer.decode(outputs[0][prompt_length:], skip_special_tokens=True)
+    
+    clean_response = raw_output.split("assistantfinal")[-1].strip()
+    if clean_response.startswith("analysis"):
+        clean_response = clean_response[len("analysis"):].strip()
+        
+    return clean_response
+
+# # A simple system prompt to keep the model helpful.
+# base_system_prompt = "You are a helpful assistant."
+
+# question = "What were the key findings of Project Minerva according to the final report?"
+
+# # Calling the model without any external context.
+# response = chat_oss(
+#     user_prompt=question,
+#     system_prompt=base_system_prompt,
+#     do_sample=False
+# )
+
+# print(f"Question: {question}\n")
+# print(f"Model's Answer (Without RAG): \n{response}")
+
+def retrieve_context(query, k=3):
+    """
+    Retrieves the top-k most relevant chunks from the FAISS index for a given query.
+    """
+    print(f"Retrieving context for query: '{query}'")
+
+    # embed the query
+    query_emb = embedder.encode([query], convert_to_numpy=True).astype(np.float32)
+
+    # normalize the query embedding (for cosine similarity)
+    faiss.normalize_L2(query_emb)
+
+    # search the FAISS index
+    distances, indices = index.search(query_emb, k)
+
+    # fetch the actual text chunks using the indices
+    retrieve_chunks_text = []
+    for i in indices[0]:
+        retrieve_chunks_text.append(raw_chunks[i])
+
+    retrieved_chunks_meta = []
+    for i in indices[0]:
+        retrieved_chunks_meta.append(chunk_metadata[i])
+
+    # we combine single context string
+    context = "\n\n---\n\n".join(retrieve_chunks_text)
+
+    print("Context retrieved successfully.")
+
+    # Return both the context string AND the list of metadata dictionaries
+    return context, retrieved_chunks_meta
 
 
+def ask_rag(query):
+    """
+    The complete RAG pipeline.
+    Retrieves context, builds a prompt, and generates an answer with sources.
+    """
+    # First retrieve context
+    retrieved_context, sources = retrieve_context(query, k=3)
+
+    # Now we create the RAG prompt:
+    # This Combine the context and query into a single prompt for the LLM, (instructing it on how to behave)
+    augmented_prompt  = """
+        You are a helpful assistant for answering questions about US Senate bills and Acts.
+        Use the following context to answer the user's question.
+        If the answer is not found in the context, state that you cannot find the answer in the provided documents.
+        Do not use any external knowledge or make up information.
+
+        (START CONTEXT): {context} (END CONTEXT).
+
+        USER QUESTION: {question} """.strip()
+
+    # based on the prompt template, we create the final prompt text passing in the retrieved context and user question
+    final_prompt_text = augmented_prompt.format(context=retrieved_context, question=query)
+
+    print("\nGENERATING RESPONSE:\n")
+
+    # passing the fully formatted RAG prompt as the "user_prompt"
+    response = chat_oss(final_prompt_text, max_new_tokens=512, do_sample=False)
+
+    # print("SOURCES USED:\n")
+    # for i, meta in enumerate(sources):
+    #     print(f"Source {i+1}: {meta['title']} (Chunk ID: {meta['chunk_id']})")
+    
+    return response, sources
+
+
+# # Example 1:
+# response, sources = ask_rag("Who is Joanne Chesimard and what did she do?")
+# print("\n\nFINAL ANSWER:\n")
+# print(response)
+   
 @app.route("/api/qb", methods=["POST"])
 def qb():
     payload = request.get_json() or {}
@@ -147,66 +231,24 @@ def qb():
     if not question:
         return jsonify({"error": "Please provide a question."}), 400
 
-    # we first embed the question from the user
-    q_emb = embedder.encode([question], convert_to_numpy=True)
-
-    # then we retrieve top 5 chunks
-    distances, indices = index.search(q_emb, 5)
-    passages = []
-    for idx in indices[0]:
-        passages.append(raw_chunks[idx])
-
-    # metadata lines to add context
-    # metadata_lines = []
-    # metadata_lines.append(f"You have ingested {NUM_FILES} text files:")
-    # for fp in FILE_PATHS:
-    #     metadata_lines.append(f"- {Path(fp).name}")
-
-    #metadata_block = "\n".join(metadata_lines)
-    #passages_block = "\n\n".join(passages)
-
-    SYSTEM = (
-    "You are a helpful assistant. "
-    "Answer the user's question directly in natural language. "
-    "Use the provided context only if it helps, but do NOT mention or quote the context, "
-    "files, retrieval steps, or anything about how you got the information."
-    )
-
-    context = "\n\n".join(passages)
-    messages = [
-        {"role": "system", "content": SYSTEM},
-        {"role": "system", "content": f"Context:\n{context}"},
-        {"role": "user", "content": question},
-    ]
-
-    #prompt = (
-    #     f"{SYSTEM}\n\n"
-    #     f"Context:\n{context}\n\n"
-    #     f"User question: {question}\n"
-    #     f"Assistant answer:"
-    # )
-    #We combine the components above to assemble the full promp
-    # prompt = f"""
-    # {metadata_block}You are a helpful assistant. Use ONLY the following passages:\n
-    # Retrieved Passages: {passages_block}.\n
-    # Question: {question}.\n
-    # Answer:"""
-
-    # prompt = f"""
-    #     Please answer in concise bullet points. Start each point with "- ".
-    #     {metadata_block}
-    #     Use ONLY the following passages:
-    #     {passages_block}
-    #     Question: {question}
-    #     Answer (bullet points):
-    # """
-
-    # Sedingfing it to the model
     try:
-        answer = chat(messages, max_new_tokens=300)
-        return jsonify({"answer": answer})
-        #answer = chat(prompt)
-        #bullets = extract_bullets(answer)
-        #return jsonify({"answer": answer})
+        answer_text, sources_list = ask_rag(question)
+
+        response_payload = {
+            "answer": answer_text,
+            "sources": sources_list
+        }
+        
+        return jsonify(response_payload)
+        
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"An error occurred in the RAG pipeline: {e}", file=sys.stderr)
+        return jsonify({"error": "Sorry, something went wrong on our end."}), 500
+
+if __name__ == "__main__":
+    app.run(host="
+# TO RUN FRONT END:
+# one terminal
+# `firebase emulators:start`
+# second tgerminal 
+# `npm run dev`
