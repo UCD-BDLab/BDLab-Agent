@@ -1,5 +1,4 @@
 #other
-
 dev_notes.md
 data/
 kaggle.json
@@ -14,6 +13,7 @@ app_testing_fail.ipynb
 app_testing_backup.ipynb
 app_old.py
 tools/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

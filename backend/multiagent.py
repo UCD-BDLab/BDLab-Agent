@@ -4,9 +4,9 @@ import time
 import jinja2
 from datetime import datetime
 import jinja2
-from datasets import load_dataset
+#from datasets import load_dataset
 
-dataset = load_dataset("pxferna/ARC-AGI-v1")
+#dataset = load_dataset("pxferna/ARC-AGI-v1")
 example_text = dataset["test"][50]["prompt"]
 
 def split_full_prompt(full_prompt):
@@ -60,15 +60,14 @@ AGENT4_SYSTEM_PROMPT = "You are Agent 4, a philosophical and thoughtful AI who s
 AGENT4_TEMPERATURE = 0.9
 AGENT4_MAX_TOKENS = 250
 
-OPENROUTER_API_KEY = "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"
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MAX_HISTORY = 40  # Increased for 4 agents
-DELAY_BETWEEN_MESSAGES = 0.5  # Seconds between messages for readability
+#OPENROUTER_API_KEY = "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"
+#OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+MAX_HISTORY = 40
+DELAY_BETWEEN_MESSAGES = 0.5
 
 # Game Instruction
 
 GAME_INSTRUCTION = "Your job is to analyze grids and discuss patterns that you find in them."
-
 
 # Store conversation history
 conversation_history = []
@@ -179,7 +178,7 @@ def print_message(agent_name, message, color_code=""):
 def print_welcome():
     """Print welcome message"""
     print("\n" + "="*70)
-    print("🤖 Four AI Agents Counting Game 🤖")
+    print("Four AI Agents Counting Game")
     print("="*70)
     print(f"\n\033[95m{AGENT1_NAME}\033[0m - \033[96m{AGENT2_NAME}\033[0m - \033[93m{AGENT3_NAME}\033[0m - \033[92m{AGENT4_NAME}\033[0m")
     print("\nPress Ctrl+C to stop at any time")
