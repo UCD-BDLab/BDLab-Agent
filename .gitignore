@@ -18,6 +18,8 @@ tools/
 __pycache__/
 *.py[codz]
 *$py.class
+models/
+utils/
 
 # C extensions
 *.so
