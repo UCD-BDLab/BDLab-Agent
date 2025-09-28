@@ -85,12 +85,8 @@ print("Done.")
 print("Model and tokenizer loaded successfully.")
 store = IVFCosineFAISS(index_key="IVF4096,PQ64", nprobe=16)
 
-# First time:
-store.build(raw_chunks, chunk_metadata)
-store.save("index.faiss")
-store.save_corpus("chunks.jsonl")
 
-# Serving after a reboot:
+# Serving after restarting the app:
 serve = IVFCosineFAISS(index_key="IVF4096,PQ64", nprobe=16)
 serve.load_mmap("index.faiss")
 serve.load_corpus("chunks.jsonl")

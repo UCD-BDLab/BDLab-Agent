@@ -12,7 +12,7 @@ DISES/
 app_testing_fail.ipynb
 app_testing_backup.ipynb
 app_old.py
-tools/
+backend/tools/vectorDB.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
