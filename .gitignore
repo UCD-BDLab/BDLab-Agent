@@ -13,6 +13,8 @@ app_testing_fail.ipynb
 app_testing_backup.ipynb
 app_old.py
 backend/tools/vectorDB.md
+backend/multiagent_brk.py
+*csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
