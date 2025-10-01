@@ -3,17 +3,24 @@ import re
 import glob
 import faiss
 import torch
+import sys
 from pathlib import Path
 from config import DevelopmentConfig, ProductionConfig, ModelConfig
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import numpy as np
+import json
+import gc
+from collections import defaultdict
+from backend.tools.embed import read_files
+from backend.models.chat_agents import load_llm, chat_oss
+from backend.tools.retrieval import retrieve_context, ask_rag
+from backend.tools.vector_db import IVFCosineFAISS
+from backend.tools.read_policy import load_pdfs_from_directory, build_faiss_index, flatten_knowledge_tree, split_into_chunks,classify_paragraph_with_rag
 
 app = Flask(__name__)
-
-# load the model configuration
-app.config.from_object(ModelConfig)
 
 # If FLASK_ENV or FLASK_DEBUG tells us we’re in dev mode, use DevelopmentConfig
 if os.environ.get("FLASK_ENV") == "development" or os.environ.get("FLASK_DEBUG") == "1":
@@ -26,79 +33,75 @@ else:
 # Now safe to reference CORS_ORIGINS, with a fallback to empty list
 CORS(app, resources={r"/api/*": {"origins": app.config.get("CORS_ORIGINS", [])}})
 
-# Load your documents using model configuration 
-DATA_FOLDER = ModelConfig.PROJECT_ROOT / "data" / "kaggle" / "us-senate-bill"
-FILE_PATHS = list(DATA_FOLDER.glob("*.txt"))
-NUM_FILES = len(FILE_PATHS)
+PDF_DIRECTORY = "/home/vicente/Github/BDLab-Agent/backend/utils/uncoded"
+RESULTS_FILE = "classification_results.json"
 
-# Read the .txt files and split them into chunks
-raw_chunks = []
-for path in FILE_PATHS:
-    text = path.read_text(encoding="utf-8")
-    for para in text.split("\n\n"):
-        s = para.strip()
-        if len(s) > 200:
-            raw_chunks.append(s)
+emd_model = "/home/vicente/Github/BDLab-Agent/backend/data/embeddings/bge-large"
+embedder = SentenceTransformer(emd_model, device='cuda')
 
-# Here we use a sentence tranformer to build the embeddings (text to numeric vectors)
-# FAISS is used as a vector database to index those embeddings
-# This gives us the ability to search for similar chunks of text
-# Not quite a database, this vector index lives in memory
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-chunk_embs = embedder.encode(raw_chunks, convert_to_numpy=True, show_progress_bar=True)
-
-dim = chunk_embs.shape[1]
-index = faiss.IndexFlatL2(dim)
-index.add(chunk_embs)
-
-base = Path(app.config["MODEL_BASE_PATH"])/ "snapshots"/ app.config["MODEL_SNAPSHOT"]
-model = AutoModelForCausalLM.from_pretrained(str(base),torch_dtype=torch.bfloat16,device_map="auto",local_files_only=True)
+base = Path("/home/vicente/Github/BDLab-Agent/backend/data/LLMs/gpt-oss-20b")
+model = AutoModelForCausalLM.from_pretrained(str(base),dtype=torch.bfloat16,device_map="auto",local_files_only=True)
 tokenizer = AutoTokenizer.from_pretrained(str(base),local_files_only=True)
 
-# if using GPT2, set pad_token_id to eos_token_id, otherwise coment it out and uncomment the lines above for Llama3
-model.config.pad_token_id = model.config.eos_token_id
+with open('knowlesge_tree.json','r') as f:
+    knowledge_tree = json.load(f)
 
-BULLET_PREFIX = r'(?:[-*]\s+|\(?\d{1,3}[.)]\)?\s+)'
+print("Loaded knowledge tree")
+flattened_items = flatten_knowledge_tree(knowledge_tree)
+index, clean_code_paths, embedder = build_faiss_index(flattened_items, embedder)
 
-def extract_bullets(txt: str):
-    txt = txt.replace('\r\n', '\n').strip()
-    pattern = rf'(^\s*{BULLET_PREFIX}.+?)(?=\n\s*(?:[-*]|\(?\d{{1,3}}[.)]\)?)\s+|$)'
+# uncoded pdfs
+classification_results = defaultdict(list)
+documents = load_pdfs_from_directory(PDF_DIRECTORY)
 
-    matches = re.findall(pattern, txt, flags=re.M | re.S)
+for doc in documents:
+    filename = doc['metadata']['source']
+    print(f"\nProcessing {filename}...")
+    
+    # use the new safer chunking function
+    chunks = split_into_chunks(doc['page_content'])
+    print(f"Found {len(chunks)} chunks to classify.")
+    
+    for i, chunk in enumerate(chunks):
+        predicted_codes = classify_paragraph_with_rag(chunk, index, clean_code_paths, embedder, model, tokenizer)
+        
+        paragraph_data = {
+            "chunk_number": i + 1,
+            "text_snippet": chunk,
+            "predicted_codes": predicted_codes
+        }
+        classification_results[filename].append(paragraph_data)
+        print(f"Chunk {i+1}: {predicted_codes}")
 
-    items = []
-    for m in matches:
-        cleaned = re.sub(rf'^\s*{BULLET_PREFIX}', '', m).strip()
-        if cleaned:
-            items.append(cleaned)
+        # clearing GPU cache after each step
+        torch.cuda.empty_cache()
+        gc.collect()
 
-    return items
+print(f"\nSaving results to {RESULTS_FILE}")
+with open(RESULTS_FILE, 'w') as f:
+    json.dump(classification_results, f, indent=4)
+print("Done.")
 
-# # chat wrapper
-# def chat(prompt: str, max_new_tokens: int = 200) -> str:
-#     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-#     outputs = model.generate(inputs.input_ids,attention_mask=inputs.attention_mask,max_new_tokens=max_new_tokens,do_sample=True,temperature=0.7)
-#     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-#     cleaned_text = text[len(prompt):].strip().split("\n\n")[0]
+print("Model and tokenizer loaded successfully.")
+store = IVFCosineFAISS(index_key="IVF4096,PQ64", nprobe=16)
 
-#     return cleaned_text
 
-def chat(prompt: str, max_new_tokens: int = 300):
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    outputs = model.generate(
-        inputs.input_ids,
-        attention_mask=inputs.attention_mask,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
-        temperature=0.7,
-        top_p=0.95,
-        eos_token_id=getattr(tokenizer, "eos_token_id", None),
-        pad_token_id=getattr(tokenizer, "pad_token_id", getattr(tokenizer, "eos_token_id", None)),
-    )
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    completion = text[len(prompt):].strip()
-    return completion
+# Serving after restarting the app:
+serve = IVFCosineFAISS(index_key="IVF4096,PQ64", nprobe=16)
+serve.load_mmap("index.faiss")
+serve.load_corpus("chunks.jsonl")
+ctx, metas, D, I = serve.search("What is FAISS IVF?", k=3)
 
+# Appending later:
+w = IVFCosineFAISS(index_key="IVF4096,PQ64", nprobe=16)
+w.load_writable("index.faiss")
+w.load_corpus("chunks.jsonl")
+w.add(["New chunk about cosine"], [{"doc_id": len(w.raw_chunks)}])
+w.save("index.faiss")
+# keep sidecar in sync
+w.save_corpus("chunks.jsonl")
+
+   
 @app.route("/api/qb", methods=["POST"])
 def qb():
     payload = request.get_json() or {}
@@ -106,61 +109,19 @@ def qb():
     if not question:
         return jsonify({"error": "Please provide a question."}), 400
 
-    # we first embed the question from the user
-    q_emb = embedder.encode([question], convert_to_numpy=True)
-
-    # then we retrieve top 5 chunks
-    distances, indices = index.search(q_emb, 5)
-    passages = []
-    for idx in indices[0]:
-        passages.append(raw_chunks[idx])
-
-    # metadata lines to add context
-    # metadata_lines = []
-    # metadata_lines.append(f"You have ingested {NUM_FILES} text files:")
-    # for fp in FILE_PATHS:
-    #     metadata_lines.append(f"- {Path(fp).name}")
-
-    #metadata_block = "\n".join(metadata_lines)
-    #passages_block = "\n\n".join(passages)
-
-    SYSTEM = (
-    "You are a helpful assistant. "
-    "Answer the user's question directly in natural language. "
-    "Use the provided context only if it helps, but do NOT mention or quote the context, "
-    "files, retrieval steps, or anything about how you got the information."
-    )
-
-    context = "\n\n".join(passages)
-
-    prompt = (
-        f"{SYSTEM}\n\n"
-        f"Context:\n{context}\n\n"
-        f"User question: {question}\n"
-        f"Assistant answer:"
-    )
-    #We combine the components above to assemble the full promp
-    # prompt = f"""
-    # {metadata_block}You are a helpful assistant. Use ONLY the following passages:\n
-    # Retrieved Passages: {passages_block}.\n
-    # Question: {question}.\n
-    # Answer:"""
-
-    # prompt = f"""
-    #     Please answer in concise bullet points. Start each point with "- ".
-    #     {metadata_block}
-    #     Use ONLY the following passages:
-    #     {passages_block}
-    #     Question: {question}
-    #     Answer (bullet points):
-    # """
-
-    # Sedingfing it to the model
     try:
-        answer = chat(prompt, max_new_tokens=300)
-        return jsonify({"answer": answer})
-        #answer = chat(prompt)
-        #bullets = extract_bullets(answer)
-        #return jsonify({"answer": answer})
+        answer_text, sources_list = ask_rag(question)
+
+        response_payload = {
+            "answer": answer_text,
+            "sources": sources_list
+        }
+        
+        return jsonify(response_payload)
+        
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"An error occurred in the RAG pipeline: {e}", file=sys.stderr)
+        return jsonify({"error": "Sorry, something went wrong on our end."}), 500
+
+
+

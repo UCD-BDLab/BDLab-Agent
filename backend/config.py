@@ -7,8 +7,9 @@ class Config:
 
 class ModelConfig(Config):
     PROJECT_ROOT = Path(__file__).parent
-    MODEL_BASE_PATH = Path(os.getenv("MODEL_BASE_PATH",PROJECT_ROOT / "data" / "models" / "gpt2-large"/ "models--gpt2-large"))
-    MODEL_SNAPSHOT = os.getenv("MODEL_SNAPSHOT","32b71b12589c2f8d625668d2335a01cac3249519")
+    # /home/vicente/Github/BDLab-Agent/backend/data/GPTModels/gpt-oss-20b
+    MODEL_BASE_PATH = Path(os.getenv("MODEL_BASE_PATH",PROJECT_ROOT / "data" / "GPTModels" / "gpt-oss-20b"))
+    #MODEL_SNAPSHOT = os.getenv("MODEL_SNAPSHOT","32b71b12589c2f8d625668d2335a01cac3249519")
 
 class DevelopmentConfig(Config):
     DEBUG = True

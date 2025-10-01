@@ -9,6 +9,10 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import SendIcon from '@mui/icons-material/Send';
 import { API_BASE_URL } from '../config.js';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+// import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+// import Link from '@mui/material/Link';
 
 export default function ChatBot() {
   const [messages, setMessages] = useState([]);
@@ -20,26 +24,30 @@ export default function ChatBot() {
     const text = input.trim();
     if (!text) return;
 
-    setMessages((prev) => [...prev, { sender: 'user', text }]);
+    setMessages(prev => [...prev, { sender: 'user', text }]);
     setInput('');
     setLoading(true);
 
-    try { 
+    try {
       const res = await fetch(`${API_BASE_URL}/api/qb`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: text }),
       });
-      if (!res.ok) {
-        const { error } = await res.json();
-        throw new Error(error || res.statusText);
-      }
-      const { answer } = await res.json();
 
-      setMessages((prev) => [...prev, { sender: 'bot', text: answer }]);
+      const payload = await res.json();
+
+      if (!res.ok) {
+        const message = payload?.error || res.statusText || 'Request failed';
+        throw new Error(message);
+      }
+
+      const answer = payload?.answer ?? '';
+
+      setMessages(prev => [...prev, { sender: 'bot', text: answer }]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setMessages((prev) => [...prev, { sender: 'bot', text: `Error: ${message}` }]);
+      setMessages(prev => [...prev, { sender: 'bot', text: `Error: ${message}` }]);
     } finally {
       setLoading(false);
     }
@@ -67,27 +75,19 @@ export default function ChatBot() {
       <Box sx={{ flexGrow: 1, overflowY: 'auto', mb: 1 }}>
         <List>
           {messages.map((m, idx) => (
-            <ListItem
-              key={idx}
-              sx={{ justifyContent: m.sender === 'user' ? 'flex-end' : 'flex-start' }}
-            >
-              <Box
-                sx={{
-                  bgcolor: m.sender === 'user' ? 'primary.light' : 'grey.200',
-                  p: 1,
-                  borderRadius: 1,
-                  maxWidth: '80%'
-                }}
-              >
-            <ListItemText
-              primary={m.text}
-              slotProps={{
-                primary: {
-                  component: 'span',
-                  sx: { whiteSpace: 'pre-wrap' },
-                },
-              }}
-            />
+            <ListItem key={idx} sx={{ justifyContent: m.sender === 'user' ? 'flex-end' : 'flex-start' }}>
+              <Box sx={{ bgcolor: m.sender === 'user' ? 'primary.light' : 'grey.200', p: 1, borderRadius: 1, maxWidth: '80%' }}>
+                {m.sender === 'user' ? (
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {m.text}
+                </Typography>
+              ) : (
+                <Box sx={{ '& p': { m: 0, mb: 1 }, '& ul, & ol': { m: 0, pl: 3, mb: 1 } }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {m.text ?? ''}
+                  </ReactMarkdown>
+                </Box>
+              )}
               </Box>
             </ListItem>
           ))}

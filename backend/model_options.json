@@ -1,0 +1,72 @@
+{
+  "generative_models": [
+    {
+      "name": "gpt2-large",
+      "parameters": "774 Million",
+      "type": "causal",
+      "description": "Lightweight and fast. Good for testing working components."
+    },
+    {
+      "name": "tiiuae/falcon-7b",
+      "parameters": "7 Billion",
+      "type": "causal",
+      "description": "Efficient few-shot generation."
+    },
+    {
+      "name": "meta-llama/Llama-2-7b-chat-hf",
+      "parameters": "7 Billion",
+      "type": "chat-optimized",
+      "description": "Dialogue and instruction."
+    },
+    {
+      "name": "mistralai/Mistral-7B-v0.1",
+      "parameters": "7 Billion",
+      "type": "causal",
+      "description": "Versatile base model."
+    },
+    {
+      "name": "mistralai/Mistral-7B-Instruct-v0.2",
+      "parameters": "7 Billion",
+      "type": "instruct",
+      "description": "Enhanced instruction following."
+    },
+    {
+      "name": "meta-llama/Meta-Llama-3-8B-Instruct",
+      "parameters": "8 Billion",
+      "type": "instruct",
+      "description": "Balanced performance."
+    },
+    {
+      "name": "meta-llama/Meta-Llama-3-70B-Instruct",
+      "parameters": "70 Billion",
+      "type": "instruct",
+      "description": "Instruction tuned, highest quality of the set. Requires 24GB of GPU memory, 48GB recommended."
+    }
+  ],
+  "embedding_models": [
+    {
+      "name": "all-MiniLM-L6-v2",
+      "size": "22 MB",
+      "dimension": 384,
+      "description": "Fast and balanced."
+    },
+    {
+      "name": "all-MPNet-base-v2",
+      "size": "420 MB",
+      "dimension": 768,
+      "description": "Higher semantic accuracy but heavier compute."
+    },
+    {
+      "name": "multi-qa-MPNet-base-v2",
+      "size": "420 MB",
+      "dimension": 768,
+      "description": "Tuned for question-answer retrieval."
+    },
+    {
+      "name": "paraphrase-xlm-r-multi-v1",
+      "size": "500 MB",
+      "dimension": 768,
+      "description": "Multilingual retrieval, slowest of the set."
+    }
+  ]
+}
