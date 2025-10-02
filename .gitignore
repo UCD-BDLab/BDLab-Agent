@@ -1,6 +1,9 @@
 #other
 dev_notes.md
 data/
+*csv
+*pdf
+*json
 kaggle.json
 notes.md
 Lab-Agent-oldUI/
@@ -13,12 +16,14 @@ app_testing_fail.ipynb
 app_testing_backup.ipynb
 app_old.py
 backend/tools/vectorDB.md
-
+backend/multiagent_brk.py
+secrets.json
+Agents.md
+testingMulti_Agent_openai.ipynb
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
-models/
 utils/
 
 # C extensions

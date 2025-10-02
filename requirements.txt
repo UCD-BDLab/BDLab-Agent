@@ -17,6 +17,9 @@ kernels
 safetensors
 openai-harmony
 bitsandbytes
+google-genai
+
+datasets
 
 # i also had to instal  NVIDIA CUDA Compiler driver which is included as part of the CUDA Toolkit
 # nvcc --version
