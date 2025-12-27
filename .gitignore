@@ -1,11 +1,14 @@
 #other
 dev_notes.md
-data/
+backend/data/Embeddings
+backend/data/LLMs
 *csv
 *pdf
 *json
 kaggle.json
 notes.md
+*arrow
+
 Lab-Agent-oldUI/
 seed.json
 .env.local
@@ -20,6 +23,12 @@ backend/multiagent_brk.py
 secrets.json
 Agents.md
 testingMulti_Agent_openai.ipynb
+sorting_policies
+Research_Notes/
+
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
